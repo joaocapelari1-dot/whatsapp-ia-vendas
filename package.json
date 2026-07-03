@@ -13,7 +13,6 @@
     "axios": "^1.7.0",
     "dotenv": "^16.4.0",
     "express": "^4.19.0",
-    "mercadopago": "^1.5.17",
     "puppeteer": "^22.15.0"
   },
   "devDependencies": {
