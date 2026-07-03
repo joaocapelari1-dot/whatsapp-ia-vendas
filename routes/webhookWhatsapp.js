@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { supabase } = require('../lib/supabase');
 const { extrairDadosEvolution } = require('../services/evolutionApi');
-const { processarComIA } = require('../services/processarComIA');
+const { processarMensagem } = require('../src/salesBrain');
 
 router.post('/webhook/whatsapp', async (req, res) => {
   try {
@@ -44,7 +44,7 @@ router.post('/webhook/whatsapp', async (req, res) => {
 
     const produto = lead.produto_atual || null;
 
-    await processarComIA(lead, mensagem, produto);
+    await processarMensagem(lead, mensagem, produto);
     res.sendStatus(200);
   } catch (erro) {
     console.error('Erro no webhook WhatsApp:', erro);

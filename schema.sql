@@ -56,3 +56,48 @@ create index if not exists idx_leads_telefone on leads(telefone);
 create index if not exists idx_conversas_lead on conversas(lead_id);
 create index if not exists idx_produtos_codigo on produtos(codigo);
 create index if not exists idx_vendas_lead_produto on vendas(lead_id, produto_id);
+
+-- ============================================
+-- Sales Brain (Fase 1) — estado e auditoria
+-- ============================================
+
+-- Estado persistente de cada conversa (memória de trabalho do Decision Engine)
+create table if not exists conversation_state (
+  id uuid primary key default gen_random_uuid(),
+  lead_id uuid references leads(id) unique,
+  product_id uuid references produtos(id),
+  stage text default 'discovery',
+  buy_score integer default 20,
+  interest_level text,
+  objections jsonb default '[]',
+  last_questions jsonb default '[]',
+  sentiment text default 'neutral',
+  checkout_generated boolean default false,
+  purchase_completed boolean default false,
+  waiting_human boolean default false,
+  messages_count integer default 0,
+  updated_at timestamptz default now()
+);
+
+-- Log de auditoria: rastro completo de cada decisão tomada pelo backend
+create table if not exists decision_logs (
+  id uuid primary key default gen_random_uuid(),
+  lead_id uuid references leads(id),
+  product_id uuid references produtos(id),
+  mensagem_recebida text,
+  intent text,
+  confidence numeric,
+  stage text,
+  emotion text,
+  objection text,
+  buy_score_delta integer,
+  estrategia text,
+  motivo_estrategia text,
+  resposta_gerada text,
+  resposta_valida boolean,
+  motivo_invalidacao text,
+  criado_em timestamptz default now()
+);
+
+create index if not exists idx_conversation_state_lead on conversation_state(lead_id);
+create index if not exists idx_decision_logs_lead on decision_logs(lead_id);
