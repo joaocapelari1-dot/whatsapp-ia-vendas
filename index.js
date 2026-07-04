@@ -8,6 +8,7 @@ app.use(express.json());
 app.use(require('./routes/webhookWhatsapp'));
 app.use(require('./routes/produtos'));
 app.use(require('./routes/market'));
+app.use(require('./routes/traffic'));
 
 // Market Brain: análise diária automática (desativa com MARKET_ENABLED=false)
 if (process.env.MARKET_ENABLED !== 'false') {

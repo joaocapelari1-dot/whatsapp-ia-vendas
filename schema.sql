@@ -139,3 +139,16 @@ create table if not exists market_snapshots (
 
 create index if not exists idx_market_snapshots_data on market_snapshots(data);
 create index if not exists idx_market_products_plataforma on market_products(plataforma);
+
+-- ============================================
+-- Traffic Brain (v1) — planos de tráfego
+-- ============================================
+
+create table if not exists traffic_plans (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid references produtos(id) unique,
+  landing_score numeric,
+  landing_detalhes jsonb,
+  plano jsonb,
+  criado_em timestamptz default now()
+);
