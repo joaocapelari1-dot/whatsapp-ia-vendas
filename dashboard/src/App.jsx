@@ -20,12 +20,21 @@ function classeScore(score) {
 }
 
 export default function App() {
-  const [resumo, setResumo] = useState(null);
-  const [radar, setRadar] = useState([]);
-  const [trafego, setTrafego] = useState([]);
-  const [vendas, setVendas] = useState(null);
-  const [erro, setErro] = useState(null);
+  const [resumo, setResumo]       = useState(null);
+  const [radar, setRadar]         = useState([]);
+  const [trafego, setTrafego]     = useState([]);
+  const [vendas, setVendas]       = useState(null);
+  const [erro, setErro]           = useState(null);
   const [atualizadoEm, setAtualizadoEm] = useState(null);
+
+  // Radar
+  const [radarRodando, setRadarRodando] = useState(false);
+  const [radarMsg, setRadarMsg]         = useState(null);
+
+  // Tráfego
+  const [gerandoPlano, setGerandoPlano] = useState(false);
+  const [planoMsg, setPlanoMsg]         = useState(null);
+  const [codigoSelecionado, setCodigoSelecionado] = useState('');
 
   const carregar = useCallback(async () => {
     try {
@@ -48,29 +57,73 @@ export default function App() {
 
   useEffect(() => {
     carregar();
-    const timer = setInterval(carregar, 60000); // atualiza a cada minuto
-    return () => clearInterval(timer);
   }, [carregar]);
+
+  const rodarRadar = async () => {
+    setRadarRodando(true);
+    setRadarMsg(null);
+    try {
+      const res = await fetch(`${API}/market/rodar`, { method: 'POST' });
+      const d = await res.json();
+      setRadarMsg('Radar iniciado! Os resultados aparecem aqui em alguns minutos.');
+      setTimeout(() => carregar(), 10000);
+    } catch {
+      setRadarMsg('Erro ao iniciar o radar. Tente novamente.');
+    } finally {
+      setRadarRodando(false);
+    }
+  };
+
+  const gerarPlano = async () => {
+    if (!codigoSelecionado) return;
+    setGerandoPlano(true);
+    setPlanoMsg(null);
+    try {
+      const res = await fetch(`${API}/traffic/gerar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codigo: codigoSelecionado })
+      });
+      const d = await res.json();
+      if (d.erro) {
+        setPlanoMsg(`Erro: ${d.erro}`);
+      } else {
+        setPlanoMsg(`Plano gerado para "${codigoSelecionado}"! Aparece abaixo em instantes.`);
+        setTimeout(() => carregar(), 5000);
+      }
+    } catch {
+      setPlanoMsg('Erro ao gerar plano. Tente novamente.');
+    } finally {
+      setGerandoPlano(false);
+    }
+  };
 
   if (erro) return <div className="wrap"><div className="erro">{erro}</div></div>;
   if (!resumo) return <div className="wrap"><div className="vazio">Carregando…</div></div>;
 
-  const escalados = resumo.atencao?.leadsEscalados || [];
-  const diasVendas = vendas ? Object.entries(vendas.porDia).slice(-14) : [];
+  const escalados    = resumo.atencao?.leadsEscalados || [];
+  const diasVendas   = vendas ? Object.entries(vendas.porDia).slice(-14) : [];
   const maxVendasDia = Math.max(1, ...diasVendas.map(([, n]) => n));
+
+  // Produtos disponíveis para gerar plano (do radar, sem plano ainda)
+  const produtosSemPlano = radar.filter(p => !trafego.find(t => t.codigo === p.codigoImportacao));
+  const todosProdutos    = radar;
 
   return (
     <div className="wrap">
       <header>
         <h1>Central de Vendas</h1>
-        {atualizadoEm && (
-          <span className="atualizado">
-            Atualizado às {atualizadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-        )}
+        <div className="header-acoes">
+          {atualizadoEm && (
+            <span className="atualizado">
+              Atualizado às {atualizadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+          <button className="btn-secundario" onClick={carregar}>↻ Atualizar</button>
+        </div>
       </header>
 
-      {/* Fluxo dos três cérebros — Market → Sales → Traffic */}
+      {/* Fluxo dos três cérebros */}
       <div className="fluxo">
         <div className="etapa">
           <div className="rotulo">Radar de produtos</div>
@@ -110,10 +163,21 @@ export default function App() {
         </div>
       </section>
 
+      {/* ── RADAR ── */}
       <section>
-        <h2>Radar de produtos — hoje</h2>
+        <div className="secao-header">
+          <h2>Radar de produtos — hoje</h2>
+          <button
+            className="btn-principal"
+            onClick={rodarRadar}
+            disabled={radarRodando}
+          >
+            {radarRodando ? 'Buscando…' : '🔍 Rodar Radar'}
+          </button>
+        </div>
+        {radarMsg && <div className="feedback">{radarMsg}</div>}
         {radar.length === 0 ? (
-          <div className="vazio">Nenhum produto analisado hoje. O radar roda automaticamente de manhã, ou dispare manualmente com POST /market/rodar.</div>
+          <div className="vazio">Nenhum produto analisado ainda. Clique em "Rodar Radar" para buscar agora.</div>
         ) : (
           <div className="cards">
             {radar.map((p, i) => (
@@ -141,10 +205,35 @@ export default function App() {
         )}
       </section>
 
+      {/* ── TRÁFEGO ── */}
       <section>
-        <h2>Planos de tráfego</h2>
+        <div className="secao-header">
+          <h2>Planos de tráfego</h2>
+          <div className="acao-inline">
+            <select
+              value={codigoSelecionado}
+              onChange={e => setCodigoSelecionado(e.target.value)}
+              disabled={gerandoPlano}
+            >
+              <option value="">Escolher produto…</option>
+              {todosProdutos.map((p, i) => (
+                <option key={i} value={p.codigoImportacao}>
+                  {p.nome || p.codigoImportacao}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn-principal"
+              onClick={gerarPlano}
+              disabled={gerandoPlano || !codigoSelecionado}
+            >
+              {gerandoPlano ? 'Gerando…' : '📋 Gerar Plano'}
+            </button>
+          </div>
+        </div>
+        {planoMsg && <div className="feedback">{planoMsg}</div>}
         {trafego.length === 0 ? (
-          <div className="vazio">Nenhum plano gerado ainda. Gere com POST /traffic/gerar passando o código do produto.</div>
+          <div className="vazio">Nenhum plano gerado ainda. Rode o radar primeiro, depois escolha um produto acima.</div>
         ) : (
           <div className="cards">
             {trafego.map((t, i) => (
