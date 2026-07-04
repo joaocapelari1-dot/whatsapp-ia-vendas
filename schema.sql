@@ -101,3 +101,41 @@ create table if not exists decision_logs (
 
 create index if not exists idx_conversation_state_lead on conversation_state(lead_id);
 create index if not exists idx_decision_logs_lead on decision_logs(lead_id);
+
+-- ============================================
+-- Market Brain (v1) — radar de produtos
+-- ============================================
+
+create table if not exists market_products (
+  id uuid primary key default gen_random_uuid(),
+  plataforma text not null,          -- hotmart | kiwify
+  external_id text not null,
+  nome text,
+  categoria text,
+  preco numeric,
+  comissao_pct numeric,
+  comissao_valor numeric,
+  temperatura numeric,
+  url text,
+  primeiro_visto timestamptz default now(),
+  ultimo_visto timestamptz default now(),
+  importado boolean default false,
+  unique(plataforma, external_id)
+);
+
+create table if not exists market_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid references market_products(id),
+  data date not null,
+  opportunity_score numeric,
+  confidence_score numeric,
+  trend_score numeric,
+  commission_score numeric,
+  competition_score numeric,
+  landing_score numeric,
+  raw jsonb,
+  unique(product_id, data)
+);
+
+create index if not exists idx_market_snapshots_data on market_snapshots(data);
+create index if not exists idx_market_products_plataforma on market_products(plataforma);
