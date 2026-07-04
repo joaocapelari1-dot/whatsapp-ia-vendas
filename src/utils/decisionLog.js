@@ -1,11 +1,14 @@
 const { supabase } = require('../../lib/supabase');
 
 /**
- * Registra o rastro completo de uma decisão — permite auditar depois
- * qualquer conversa: o que foi classificado, que estratégia foi escolhida,
- * e por quê.
+ * Registra o rastro completo de uma decisão.
+ * Fase 2: inclui perfil do cliente, objeção dominante e passo atual.
  */
-async function registrarDecisao({ leadId, produtoId, mensagemRecebida, classificacao, estrategia, motivoEstrategia, respostaGerada, validacao }) {
+async function registrarDecisao({
+  leadId, produtoId, mensagemRecebida, classificacao,
+  perfil, objecaoDominante, passo,
+  estrategia, motivoEstrategia, respostaGerada, validacao
+}) {
   try {
     await supabase.from('decision_logs').insert({
       lead_id: leadId,
@@ -17,6 +20,10 @@ async function registrarDecisao({ leadId, produtoId, mensagemRecebida, classific
       emotion: classificacao?.emotion,
       objection: classificacao?.objection,
       buy_score_delta: classificacao?.buyScoreDelta,
+      // Fase 2
+      perfil_cliente: perfil || null,
+      objecao_dominante: objecaoDominante || null,
+      passo_objecao: passo || null,
       estrategia,
       motivo_estrategia: motivoEstrategia,
       resposta_gerada: respostaGerada,
@@ -24,7 +31,6 @@ async function registrarDecisao({ leadId, produtoId, mensagemRecebida, classific
       motivo_invalidacao: validacao?.motivo || null
     });
   } catch (erro) {
-    // Log nunca deve derrubar o fluxo principal de atendimento
     console.error('Falha ao registrar decision log:', erro.message);
   }
 }
