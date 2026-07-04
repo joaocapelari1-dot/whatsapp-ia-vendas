@@ -1,5 +1,7 @@
 const { coletarHotmart } = require('./collectors/hotmart');
 const { coletarKiwify } = require('./collectors/kiwify');
+const { coletarGenerico } = require('./collectors/genericCollector');
+const { PLATAFORMAS } = require('./collectors/platforms');
 const { enriquecerComTrends } = require('./collectors/trends');
 const { persistirColeta, detectarMovimento } = require('./persistence');
 const { gerarRelatorio } = require('./analyst');
@@ -13,15 +15,25 @@ async function rodarAnaliseDiaria() {
   console.log('[market] Iniciando análise diária...');
   const inicio = Date.now();
 
-  // 1. Coleta das plataformas (em paralelo)
+  // 1. Coleta das plataformas — Hotmart/Kiwify (coletores dedicados) em
+  // paralelo; demais plataformas (coletor genérico) em sequência pra não
+  // abrir 7 Chromes ao mesmo tempo no Railway (limite de memória).
   const [hotmart, kiwify] = await Promise.all([
     coletarHotmart({ maxProdutos: 100 }),
     coletarKiwify({ maxProdutos: 100 })
   ]);
 
+  const porPlataforma = { hotmart: hotmart.length, kiwify: kiwify.length };
   const coletados = [...hotmart, ...kiwify];
+
+  for (const config of PLATAFORMAS) {
+    const produtos = await coletarGenerico(config, { maxProdutos: 100 });
+    porPlataforma[config.nome] = produtos.length;
+    coletados.push(...produtos);
+  }
+
   if (coletados.length === 0) {
-    await enviarTelegram('⚠️ Market Brain: nenhum produto coletado hoje. Verifique credenciais Hotmart/Kiwify nos logs.');
+    await enviarTelegram('⚠️ Market Brain: nenhum produto coletado hoje. Verifique credenciais das plataformas nos logs.');
     return;
   }
 
@@ -44,7 +56,7 @@ async function rodarAnaliseDiaria() {
   // 5. Relatório executivo via IA
   const relatorio = await gerarRelatorio({
     totalAnalisados: persistidos.length,
-    porPlataforma: { hotmart: hotmart.length, kiwify: kiwify.length },
+    porPlataforma,
     top10,
     movimento
   });
