@@ -1,9 +1,11 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('../lib/supabase');
 const { classificar } = require('./agents/classification/classify');
+const { classificarPerfil } = require('./agents/classification/profile');
 const { buscarOuCriarEstado, atualizarEstado, acrescentarLimitado } = require('./conversation/state');
 const { calcularNovoScore } = require('./decision/buyScore');
 const { decidirEstrategia, avancarEstagio, ESTRATEGIAS } = require('./decision/engine');
+const { analisarObjecao } = require('./decision/objections');
 const { montarPrompt } = require('./prompt/builder');
 const { validarResposta } = require('./response/validator');
 const { registrarDecisao } = require('./utils/decisionLog');
@@ -14,10 +16,8 @@ const { enviarMensagemWhatsapp } = require('../services/evolutionApi');
 const anthropic = new Anthropic();
 
 /**
- * Ponto de entrada do Sales Brain. Substitui o antigo processarComIA:
- * agora a decisão de ESTRATÉGIA vem do Decision Engine (backend), e o LLM
- * só entra pra classificar a intenção e depois pra escrever a resposta
- * dentro da estratégia já decidida.
+ * Ponto de entrada do Sales Brain — Fase 2.
+ * Pipeline: classificação → perfil → objeção → decisão → prompt → LLM → validação → envio
  */
 async function processarMensagem(lead, mensagemRecebida, produto) {
   // 1. Salva mensagem do lead no histórico
@@ -31,27 +31,37 @@ async function processarMensagem(lead, mensagemRecebida, produto) {
   // 2. Busca/cria o estado da conversa
   const estado = await buscarOuCriarEstado(lead.id, produto?.id);
 
-  // 3. Classifica a mensagem (chamada curta e barata)
+  // 3. Classifica a mensagem (intent, objeção, emoção, buyScoreDelta)
   const classificacao = await classificar(mensagemRecebida, estado);
 
-  // 4. Recalcula buy score e estágio
-  const novoScore = calcularNovoScore(estado.buy_score, classificacao.buyScoreDelta);
+  // 4. Recalcula buy score e avança estágio
+  const novoScore   = calcularNovoScore(estado.buy_score, classificacao.buyScoreDelta);
   const novoEstagio = avancarEstagio(estado.stage, classificacao.stage);
-  const novasObjecoes = acrescentarLimitado(estado.objections, classificacao.objection);
+  const novasObjecoes  = acrescentarLimitado(estado.objections, classificacao.objection);
   const novasPerguntas = acrescentarLimitado(estado.last_questions, mensagemRecebida, 10);
 
-  // 5. Decision Engine escolhe a ESTRATÉGIA (não a resposta)
+  // 5. Fase 2 — Perfil do cliente (heurístico, sem LLM extra)
+  const perfil = classificarPerfil(estado, classificacao);
+
+  // 6. Fase 2 — Analisa objeção dominante e passo atual na sequência de tratamento
+  const { dominante: objecaoDominante, passo, temObjecaoAtiva } = analisarObjecao(
+    classificacao.objection,
+    estado.objections || []
+  );
+
+  // 7. Decision Engine escolhe a ESTRATÉGIA (Fase 2: estratégias específicas por objeção)
   const { estrategia, motivo } = decidirEstrategia({
     intent: classificacao.intent,
     emotion: classificacao.emotion,
     objection: classificacao.objection,
+    objecaoDominante,
     buyScore: novoScore,
     stage: novoEstagio,
     waitingHuman: estado.waiting_human
   });
 
-  // 6. Atualiza o estado já com a decisão tomada
-  const estadoAtualizado = await atualizarEstado(lead.id, {
+  // 8. Atualiza estado com decisão tomada
+  await atualizarEstado(lead.id, {
     stage: novoEstagio,
     buy_score: novoScore,
     objections: novasObjecoes,
@@ -61,17 +71,19 @@ async function processarMensagem(lead, mensagemRecebida, produto) {
     waiting_human: estrategia === ESTRATEGIAS.TRANSFERIR_HUMANO ? true : estado.waiting_human
   });
 
-  // 7. Se já escalado ou sem produto identificado ainda, trata caminho curto
+  // 9. Caminho curto: escalação para humano
   if (estrategia === ESTRATEGIAS.TRANSFERIR_HUMANO) {
     const msg = 'Um momento, já vou te colocar em contato com a equipe pra te ajudar melhor nisso. 🙂';
     await enviarERegistrar(lead, msg, produto?.id);
     await registrarDecisao({
       leadId: lead.id, produtoId: produto?.id, mensagemRecebida, classificacao,
+      perfil, objecaoDominante, passo,
       estrategia, motivoEstrategia: motivo, respostaGerada: msg, validacao: { valido: true }
     });
     return;
   }
 
+  // 10. Caminho curto: sem produto identificado ainda
   if (!produto && estrategia === ESTRATEGIAS.COLETAR_INFO) {
     const respostaSemProduto = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
@@ -84,7 +96,7 @@ async function processarMensagem(lead, mensagemRecebida, produto) {
     return;
   }
 
-  // 8. Busca histórico recente pra dar contexto ao LLM
+  // 11. Busca histórico recente
   const { data: historico } = await supabase
     .from('conversas')
     .select('remetente, mensagem')
@@ -97,10 +109,16 @@ async function processarMensagem(lead, mensagemRecebida, produto) {
     content: h.mensagem
   }));
 
-  // 9. Prompt Builder monta o system prompt já com a estratégia decidida
-  const systemPrompt = montarPrompt({ produto, estrategia, perfilCliente: null });
+  // 12. Prompt Builder monta system prompt com perfil + objeção (Fase 2)
+  const systemPrompt = montarPrompt({
+    produto,
+    estrategia,
+    perfilCliente: perfil !== 'neutro' ? perfil : null,
+    objecao: temObjecaoAtiva ? objecaoDominante : null,
+    passo: temObjecaoAtiva ? passo : null
+  });
 
-  // 10. LLM só aqui entra pra transformar estratégia em linguagem natural
+  // 13. LLM gera o texto dentro da estratégia decidida
   const resposta = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 500,
@@ -109,13 +127,8 @@ async function processarMensagem(lead, mensagemRecebida, produto) {
     tools
   });
 
-  let respostaTexto = '';
-
   for (const bloco of resposta.content) {
     if (bloco.type === 'text' && bloco.text.trim()) {
-      respostaTexto = bloco.text;
-
-      // 11. Response Validator antes de enviar
       const validacao = validarResposta(bloco.text, { produto });
 
       if (!validacao.valido) {
@@ -125,6 +138,7 @@ async function processarMensagem(lead, mensagemRecebida, produto) {
         await atualizarEstado(lead.id, { waiting_human: true });
         await registrarDecisao({
           leadId: lead.id, produtoId: produto?.id, mensagemRecebida, classificacao,
+          perfil, objecaoDominante, passo,
           estrategia, motivoEstrategia: motivo, respostaGerada: bloco.text, validacao
         });
         return;
@@ -133,6 +147,7 @@ async function processarMensagem(lead, mensagemRecebida, produto) {
       await enviarERegistrar(lead, bloco.text, produto?.id);
       await registrarDecisao({
         leadId: lead.id, produtoId: produto?.id, mensagemRecebida, classificacao,
+        perfil, objecaoDominante, passo,
         estrategia, motivoEstrategia: motivo, respostaGerada: bloco.text, validacao
       });
     }
