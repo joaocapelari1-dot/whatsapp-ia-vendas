@@ -1,7 +1,9 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 
 const app = express();
+app.use(cors()); // permite o dashboard (Vercel) consumir a API (Railway)
 app.use(express.json());
 
 // Rotas
@@ -9,6 +11,7 @@ app.use(require('./routes/webhookWhatsapp'));
 app.use(require('./routes/produtos'));
 app.use(require('./routes/market'));
 app.use(require('./routes/traffic'));
+app.use(require('./routes/dashboard'));
 
 // Market Brain: análise diária automática (desativa com MARKET_ENABLED=false)
 if (process.env.MARKET_ENABLED !== 'false') {
