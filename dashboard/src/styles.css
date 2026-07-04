@@ -150,3 +150,80 @@ section { margin-bottom: 44px; }
   .card { transition: border-color 0.15s ease; }
   .card:hover { border-color: #c9d4cc; }
 }
+
+/* ── Cabeçalho de seção com botão ── */
+.secao-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.secao-header h2 { margin-bottom: 0; }
+
+/* ── Ações no header principal ── */
+.header-acoes { display: flex; align-items: center; gap: 12px; }
+
+/* ── Botões ── */
+.btn-principal {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.btn-principal:hover:not(:disabled) { background: #0a6440; }
+.btn-principal:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secundario {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.btn-secundario:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Ação inline (select + botão) ── */
+.acao-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.acao-inline select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  max-width: 220px;
+}
+.acao-inline select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── Mensagem de feedback ── */
+.feedback {
+  font-size: 13px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid #c2e0cf;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 640px) {
+  .secao-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .acao-inline { flex-direction: column; width: 100%; }
+  .acao-inline select { max-width: 100%; width: 100%; }
+  .btn-principal { width: 100%; text-align: center; }
+}
