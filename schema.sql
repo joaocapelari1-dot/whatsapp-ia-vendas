@@ -152,3 +152,8 @@ create table if not exists traffic_plans (
   plano jsonb,
   criado_em timestamptz default now()
 );
+
+-- Market Brain — evolução: fingerprint cross-plataforma e Market DNA
+alter table market_products add column if not exists fingerprint text;
+alter table market_products add column if not exists dna jsonb;
+create index if not exists idx_market_products_fingerprint on market_products(fingerprint);

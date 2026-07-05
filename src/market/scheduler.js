@@ -3,39 +3,61 @@ const { coletarKiwify } = require('./collectors/kiwify');
 const { coletarGenerico } = require('./collectors/genericCollector');
 const { PLATAFORMAS } = require('./collectors/platforms');
 const { enriquecerComTrends } = require('./collectors/trends');
-const { persistirColeta, detectarMovimento } = require('./persistence');
+const { criarProduto } = require('./models');
+const { autoReject } = require('./quality');
+const { gerarFingerprint, compararPlataformas } = require('./fingerprint');
+const { enriquecerTopProdutos } = require('./enrichment');
+const { persistirColeta, salvarDNA, detectarMovimento } = require('./persistence');
 const { gerarRelatorio } = require('./analyst');
 const { enviarTelegram } = require('./telegram');
 
 /**
- * Pipeline diário do Market Brain v1:
- * coleta → trends → score → persiste → movimento → relatório → Telegram.
+ * Pipeline diário do Market Brain:
+ * Connectors → Normalizer → Auto Reject → Fingerprint → Trends → Score →
+ * Enrichment (top N) → Comparator → persiste → movimento → relatório.
  */
 async function rodarAnaliseDiaria() {
   console.log('[market] Iniciando análise diária...');
   const inicio = Date.now();
 
-  // 1. Coleta das plataformas — Hotmart/Kiwify (coletores dedicados) em
-  // paralelo; demais plataformas (coletor genérico) em sequência pra não
-  // abrir 7 Chromes ao mesmo tempo no Railway (limite de memória).
+  // 1. CONNECTORS — coleta crua de cada plataforma
   const [hotmart, kiwify] = await Promise.all([
     coletarHotmart({ maxProdutos: 100 }),
     coletarKiwify({ maxProdutos: 100 })
   ]);
 
   const porPlataforma = { hotmart: hotmart.length, kiwify: kiwify.length };
-  const coletados = [...hotmart, ...kiwify];
+  const brutos = [...hotmart, ...kiwify];
 
   for (const config of PLATAFORMAS) {
     const produtos = await coletarGenerico(config, { maxProdutos: 100 });
     porPlataforma[config.nome] = produtos.length;
-    coletados.push(...produtos);
+    brutos.push(...produtos);
   }
 
-  if (coletados.length === 0) {
+  if (brutos.length === 0) {
     await enviarTelegram('⚠️ Market Brain: nenhum produto coletado hoje. Verifique credenciais das plataformas nos logs.');
     return;
   }
+
+  // 2. NORMALIZER — converte tudo pro modelo canônico
+  const normalizados = brutos.map(criarProduto).filter(Boolean);
+
+  // 3. AUTO REJECT — corta produto ruim antes de gastar processamento
+  const rejeitados = [];
+  const aprovados = normalizados.filter(p => {
+    const r = autoReject(p);
+    if (!r.aprovado) rejeitados.push({ titulo: p.title, motivo: r.motivo });
+    return r.aprovado;
+  });
+  console.log(`[market] Auto Reject: ${rejeitados.length} descartados, ${aprovados.length} seguem no funil`);
+
+  // 4. FINGERPRINT — identifica o mesmo produto em plataformas diferentes
+  for (const p of aprovados) p.fingerprint = gerarFingerprint(p.title);
+  const duplicadosCrossPlataforma = compararPlataformas(aprovados);
+
+  // 5. TRENDS — só os melhores por comissão (economia de consultas)
+  const coletados = aprovados;
 
   // 2. Enriquece com Google Trends (só os top por comissão, pra economizar consultas)
   const ordenadosPorComissao = [...coletados].sort(
@@ -43,25 +65,29 @@ async function rodarAnaliseDiaria() {
   );
   const enriquecidos = await enriquecerComTrends(ordenadosPorComissao, { maxConsultas: 30 });
 
-  // 3. Score + persistência
+  // 6. SCORE + persistência (source score aplicado dentro da persistência)
   const persistidos = await persistirColeta(enriquecidos);
 
-  // 4. Movimento vs. dia anterior
-  const top10 = [...persistidos]
-    .sort((a, b) => b.opportunityScore - a.opportunityScore)
-    .slice(0, 10);
+  // 7. ENRICHMENT (Market DNA) — só o top N por score, custo controlado
+  const ordenados = [...persistidos].sort((a, b) => b.opportunityScore - a.opportunityScore);
+  await enriquecerTopProdutos(ordenados);
+  await salvarDNA(ordenados);
+  const top10 = ordenados.slice(0, 10);
 
+  // 8. Movimento vs. dia anterior
   const movimento = await detectarMovimento(persistidos);
 
-  // 5. Relatório executivo via IA
+  // 9. Relatório executivo via IA (inclui duplicados cross-plataforma)
   const relatorio = await gerarRelatorio({
     totalAnalisados: persistidos.length,
+    rejeitadosHoje: rejeitados.length,
     porPlataforma,
     top10,
-    movimento
+    movimento,
+    duplicadosCrossPlataforma: duplicadosCrossPlataforma.slice(0, 5)
   });
 
-  // 6. Envio
+  // 10. Envio
   await enviarTelegram(relatorio);
 
   const duracao = ((Date.now() - inicio) / 1000).toFixed(0);

@@ -1,56 +1,58 @@
 const { supabase } = require('../../lib/supabase');
 const { calcularOpportunityScore, normalizarComissao } = require('./opportunityScore');
+const { multiplicadorFonte } = require('./quality');
 
 /**
- * Persiste os produtos coletados: upsert em market_products + snapshot
- * diário em market_snapshots com os scores calculados.
+ * Persiste produtos canônicos: upsert em market_products + snapshot diário.
+ * O Opportunity Score recebe o multiplicador do Source Score da plataforma.
  */
 async function persistirColeta(produtos) {
   const hoje = new Date().toISOString().slice(0, 10);
   const resultados = [];
 
   for (const p of produtos) {
-    if (!p.external_id || !p.nome) continue;
+    if (!p.externalId || !p.title) continue;
 
-    // Upsert do produto
     const { data: produto, error } = await supabase
       .from('market_products')
       .upsert({
-        plataforma: p.plataforma,
-        external_id: p.external_id,
-        nome: p.nome,
-        categoria: p.categoria,
-        preco: p.preco,
-        comissao_pct: p.comissao_pct,
-        comissao_valor: p.comissao_valor,
-        temperatura: p.temperatura,
+        plataforma: p.platform,
+        external_id: p.externalId,
+        nome: p.title,
+        categoria: p.category,
+        preco: p.price,
+        comissao_pct: p.commissionPct,
+        comissao_valor: p.commissionValue,
+        temperatura: p.temperature,
         url: p.url,
+        fingerprint: p.fingerprint,
         ultimo_visto: new Date().toISOString()
       }, { onConflict: 'plataforma,external_id' })
       .select()
       .single();
 
     if (error) {
-      console.error(`[market] Erro no upsert de ${p.nome}:`, error.message);
+      console.error(`[market] Erro no upsert de ${p.title}:`, error.message);
       continue;
     }
 
-    // Calcula scores do dia
     const fatores = {
-      commission: normalizarComissao(p.comissao_pct, p.comissao_valor),
-      temperature: p.temperatura != null ? Math.min(100, Number(p.temperatura)) : null,
+      commission: normalizarComissao(p.commissionPct, p.commissionValue),
+      temperature: p.temperature != null ? Math.min(100, Number(p.temperature)) : null,
       trend: p.trend_score ?? null,
-      competition: null, // v1: sem dado confiável ainda — entra no confidence
-      landing: null      // v1: avaliação de landing fica pra iteração seguinte
+      competition: null,
+      landing: null
     };
 
     const { opportunityScore, confidenceScore, detalhes } = calcularOpportunityScore(fatores);
 
-    // Snapshot do dia (upsert pra rodadas repetidas no mesmo dia)
+    // Source Score modula o resultado final (efeito suave, 0.8x a 1.0x)
+    const scoreFinal = Math.round(opportunityScore * multiplicadorFonte(p.platform));
+
     await supabase.from('market_snapshots').upsert({
       product_id: produto.id,
       data: hoje,
-      opportunity_score: opportunityScore,
+      opportunity_score: scoreFinal,
       confidence_score: confidenceScore,
       trend_score: detalhes.trend,
       commission_score: detalhes.commission,
@@ -59,15 +61,27 @@ async function persistirColeta(produtos) {
       raw: p
     }, { onConflict: 'product_id,data' });
 
-    resultados.push({ ...produto, opportunityScore, confidenceScore });
+    resultados.push({ ...p, id: produto.id, opportunityScore: scoreFinal, confidenceScore });
   }
 
   return resultados;
 }
 
 /**
+ * Salva o Market DNA gerado pelo enrichment (segunda passada, só top N).
+ */
+async function salvarDNA(produtos) {
+  for (const p of produtos) {
+    if (!p.dna || !p.id) continue;
+    await supabase
+      .from('market_products')
+      .update({ dna: p.dna })
+      .eq('id', p.id);
+  }
+}
+
+/**
  * Detecta movimento: compara o snapshot de hoje com o mais recente anterior.
- * Retorna { subiram, cairam, novos }.
  */
 async function detectarMovimento(produtosDeHoje) {
   const hoje = new Date().toISOString().slice(0, 10);
@@ -99,4 +113,4 @@ async function detectarMovimento(produtosDeHoje) {
   return { subiram, cairam, novos };
 }
 
-module.exports = { persistirColeta, detectarMovimento };
+module.exports = { persistirColeta, salvarDNA, detectarMovimento };
