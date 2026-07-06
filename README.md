@@ -102,3 +102,26 @@ Suba este backend como um segundo serviço no Railway (separado da Evolution API
 - **Nunca** implemente disparo em massa/broadcast para listas de números frios — isso é o principal gatilho de banimento no WhatsApp. O sistema aqui é 100% orientado a evento (responde quem chamou).
 - Se o produto for digital, preencha `link_entrega` na tabela `produtos` manualmente (ou crie uma rota de atualização) para que a confirmação de pagamento já entregue o acesso automaticamente.
 - Para produtos com página muito pesada em JS, o Puppeteer já lida com isso (`waitUntil: networkidle2`). Se alguma página específica falhar, pode ser necessário aumentar o timeout.
+
+## Pareamento manual de plataformas (Braip, Cakto e outras com 2FA/e-mail)
+
+Algumas plataformas de afiliado pedem confirmação por e-mail ou 2FA no
+login, o que trava o login automático do coletor. A solução: você loga
+**uma vez, manualmente, no seu PC** — o navegador abre visível, você
+completa o login normalmente (incluindo 2FA), e a sessão fica salva no
+Supabase. O coletor no Railway reaproveita essa sessão depois, sem
+precisar logar de novo por semanas.
+
+Rodar (no terminal, dentro da pasta do projeto, com `.env` preenchido):
+
+```
+node scripts/pareamento.js braip
+node scripts/pareamento.js cakto
+```
+
+Troque `braip`/`cakto` pela plataforma que quiser parear (`hotmart`,
+`kiwify`, `eduzz`, `monetizze`, `kairos` também funcionam, mas normalmente
+só precisam disso se o login automático falhar).
+
+Quando a sessão expirar (você vai ver um aviso nos logs do Railway tipo
+`sessão pareada parece ter expirado`), é só rodar o comando de novo.

@@ -157,3 +157,15 @@ create table if not exists traffic_plans (
 alter table market_products add column if not exists fingerprint text;
 alter table market_products add column if not exists dna jsonb;
 create index if not exists idx_market_products_fingerprint on market_products(fingerprint);
+
+-- Sessões persistentes de login por plataforma (pareamento manual).
+-- Evita repetir login toda vez que o coletor roda — resolve o problema
+-- de 2FA/confirmação por e-mail: você loga uma vez manualmente no seu PC
+-- (scripts/pareamento.js), a sessão fica salva aqui, e o coletor no
+-- servidor reaproveita os cookies em vez de logar de novo.
+create table if not exists platform_sessions (
+  plataforma text primary key,
+  cookies jsonb not null,
+  criado_em timestamptz default now(),
+  atualizado_em timestamptz default now()
+);
