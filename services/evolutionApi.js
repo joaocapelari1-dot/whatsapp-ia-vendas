@@ -28,9 +28,27 @@ async function enviarMensagemWhatsapp(telefone, mensagem) {
 }
 
 function extrairDadosEvolution(body) {
-  // Formato padrão do webhook da Evolution API (evento messages.upsert)
-  const data = body.data;
-  const telefone = data.key.remoteJid.split('@')[0];
+  // A Evolution API manda vários tipos de evento pro mesmo webhook
+  // (mensagem, presença "digitando", confirmação de leitura, conexão...).
+  // Só nos interessa messages.upsert com uma mensagem de texto real.
+  if (body?.event && body.event !== 'messages.upsert') {
+    return { telefone: null, mensagem: null };
+  }
+
+  const data = body?.data;
+  const key = data?.key;
+
+  if (!key?.remoteJid) {
+    return { telefone: null, mensagem: null };
+  }
+
+  // Ignora mensagens enviadas por nós mesmos (eco do próprio envio) e
+  // mensagens de grupo (remoteJid termina em @g.us)
+  if (key.fromMe || key.remoteJid.endsWith('@g.us')) {
+    return { telefone: null, mensagem: null };
+  }
+
+  const telefone = key.remoteJid.split('@')[0];
   const mensagem = data.message?.conversation
     || data.message?.extendedTextMessage?.text
     || '';
